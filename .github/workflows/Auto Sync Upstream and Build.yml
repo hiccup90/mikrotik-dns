@@ -1,0 +1,71 @@
+name: Auto Sync Upstream and Build Docker Images
+
+on:
+  schedule:
+    # 每天凌晨 2 点自动同步（可调整）
+    - cron: "0 2 * * *"
+  workflow_dispatch: # 支持手动触发
+
+jobs:
+  sync-and-build:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+      packages: write
+
+    steps:
+      # 1️⃣ Checkout fork
+      - name: Checkout fork
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      # 2️⃣ 添加上游仓库
+      - name: Add upstream remote
+        run: |
+          git remote add upstream https://github.com/publi0/mikrotik-dns.git
+          git fetch upstream
+
+      # 3️⃣ 合并上游 main 分支
+      - name: Merge upstream/main
+        run: |
+          git merge upstream/main --allow-unrelated-histories -m "Auto-sync from upstream"
+        continue-on-error: true  # 避免冲突阻塞
+
+      # 4️⃣ Push 到 fork 仓库
+      - name: Push changes to fork
+        run: git push origin main
+
+      # 5️⃣ Set up Docker Buildx
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # 6️⃣ Login to GHCR
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # 7️⃣ Build and push backend
+      - name: Build and push backend
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/mikrotik-dns-backend:latest
+          platforms: linux/amd64,linux/arm64
+
+      # 8️⃣ Build and push frontend
+      - name: Build and push frontend
+        uses: docker/build-push-action@v4
+        with:
+          context: ./page
+          file: ./page/Dockerfile
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/mikrotik-dns-frontend:latest
+          platforms: linux/amd64,linux/arm64
